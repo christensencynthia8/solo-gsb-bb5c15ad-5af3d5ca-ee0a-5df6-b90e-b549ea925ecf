@@ -165,6 +165,25 @@ def test_resolution_can_accept_a_deletion():
     assert response.json()["merged"] == {"servers": [{"id": "b"}]}
 
 
+def test_identical_new_identity_item_with_numeric_spelling_appended_once():
+    # Regression: an item absent from base, added with identical content
+    # on both sides under JSON-equal numeric spellings (1 / 1.0), is
+    # appended exactly once with no conflict.
+    payload = {
+        "base": {"servers": [{"id": "a"}]},
+        "left": {"servers": [{"id": "a"}, {"id": 1, "v": 1}]},
+        "right": {"servers": [{"id": "a"}, {"id": 1.0, "v": 1}]},
+        "arrayIdentity": {"/servers": "id"},
+    }
+    response = client.post("/merge", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["merged"] == {
+        "servers": [{"id": "a"}, {"id": 1, "v": 1}]
+    }
+    assert body["conflicts"] == []
+
+
 def test_merge_accepts_snake_case_conflict_resolutions():
     payload = {
         "base": {"a": 1},

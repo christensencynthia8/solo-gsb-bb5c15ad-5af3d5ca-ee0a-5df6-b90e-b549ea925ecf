@@ -1095,8 +1095,56 @@ def _identity_eligible(base: list, left: list, right: list, id_key: str) -> bool
 
 def _canonical_id(value: Any) -> str:
     # sort_keys keeps {"a":1,"b":2} and {"b":2,"a":1} equivalent; such a
-    # composite identity is unusual but the ordering must be total.
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    # composite identity is unusual but the ordering must be total. Numbers
+    # are normalized first so JSON-equal spellings of the same number (1 and
+    # 1.0) share one identity key; otherwise an item added identically on
+    # both sides under different numeric spellings would be treated as two
+    # identities and appended twice. Typed scalars are wrapped in tagged
+    # arrays so different JSON types never share a key.
+    return json.dumps(
+        _normalize_json(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+# Marker element of every type tag. It never appears inside normalized
+# JSON (no string is ever left bare), so a real array identity cannot
+# produce the same encoding.
+_ID_TAG_MARKER = "~id~"
+
+
+def _tagged(kind: str, value: Any) -> list:
+    return [_ID_TAG_MARKER, kind, value]
+
+
+def _normalize_json(value: Any) -> Any:
+    """Map JSON-equal values onto one canonical representation.
+
+    Integers and floats are equal as JSON numbers (see :func:`json_equal`):
+    a whole-number float (``1.0``) shares the integer's key, while a
+    fractional float and an integer too large to round-trip through a float
+    keep distinct, exact keys. Booleans stay distinct from numbers. Strings
+    and nulls are type-tagged and lists/objects recurse.
+    """
+    if isinstance(value, bool):
+        return _tagged("bool", int(value))
+    if isinstance(value, int):
+        return _tagged("int", value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return _tagged("int", int(value))
+        return _tagged("float", value)
+    if isinstance(value, str):
+        return _tagged("str", value)
+    if value is None:
+        return _tagged("null", None)
+    if isinstance(value, list):
+        return [_normalize_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _normalize_json(item) for key, item in value.items()}
+    return value
 
 
 def _index_items(items: list, id_key: str) -> "OrderedDict[str, dict]":

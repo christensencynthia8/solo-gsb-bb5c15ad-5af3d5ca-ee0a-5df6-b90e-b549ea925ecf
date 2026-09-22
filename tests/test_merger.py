@@ -258,6 +258,90 @@ def test_identity_array_same_new_id_added_differently_conflicts():
     ]
 
 
+def test_identity_array_identical_new_item_added_on_both_sides_once():
+    # An item absent from base, added with identical content on both
+    # sides, is appended exactly once (regression: it used to be appended
+    # twice when the identity's numeric spelling differed, e.g. 1 / 1.0,
+    # which JSON-equal compares as the same value).
+    base = {"srv": [{"id": "a"}]}
+    left = {"srv": [{"id": "a"}, {"id": 1, "v": 1}]}
+    right = {"srv": [{"id": "a"}, {"id": 1.0, "v": 1}]}
+    merged, conflicts = merge(base, left, right, {"/srv": "id"})
+    assert merged == {"srv": [{"id": "a"}, {"id": 1, "v": 1}]}
+    assert conflicts == []
+
+
+def test_identity_array_numeric_identity_spelling_orders_with_existing_rules():
+    # The single appended item keeps the new-item identity ordering and
+    # sorts among other new items by numeric value.
+    base = {"srv": [{"id": "base"}]}
+    left = {"srv": [{"id": "base"}, {"id": 3}, {"id": 1}]}
+    right = {"srv": [{"id": "base"}, {"id": 1.0}, {"id": 3.0}]}
+    merged, conflicts = merge(base, left, right, {"/srv": "id"})
+    assert [item["id"] for item in merged["srv"]] == ["base", 1, 3]
+    assert conflicts == []
+
+
+def test_identity_array_numeric_identity_same_id_different_content_conflicts():
+    # Same identity under different numeric spellings but different
+    # content is still a both_added conflict, merged to the left value.
+    base = {"srv": []}
+    left = {"srv": [{"id": 2, "v": 1}]}
+    right = {"srv": [{"id": 2.0, "v": 2}]}
+    merged, conflicts = merge(base, left, right, {"/srv": "id"})
+    assert merged == {"srv": [{"id": 2, "v": 1}]}
+    assert conflicts == [
+        ("/srv", "both_added", None, {"id": 2, "v": 1}, {"id": 2.0, "v": 2})
+    ]
+
+
+def test_identity_array_numeric_spelling_one_sided_add_unchanged():
+    base = {"srv": []}
+    left = {"srv": [{"id": 5.0, "v": "x"}]}
+    right = {"srv": []}
+    merged, conflicts = merge(base, left, right, {"/srv": "id"})
+    assert merged == {"srv": [{"id": 5.0, "v": "x"}]}
+    assert conflicts == []
+
+
+def test_identity_array_numeric_spelling_existing_item_edit_delete_unchanged():
+    # Existing items keyed by differently-spelled equal numbers still
+    # match as the same identity for edits / deletes.
+    base = {"srv": [{"id": 1, "v": 0}]}
+    left = {"srv": [{"id": 1.0, "v": 10}]}  # edit, float spelling
+    right = {"srv": []}  # delete
+    merged, conflicts = merge(base, left, right, {"/srv": "id"})
+    # left modified, right deleted -> keep base + delete_vs_modify.
+    assert merged == {"srv": [{"id": 1, "v": 0}]}
+    assert conflicts == [
+        ("/srv/0", "delete_vs_modify",
+         {"id": 1, "v": 0}, {"id": 1.0, "v": 10}, None)
+    ]
+
+
+def test_identity_array_numeric_identity_keeps_unrelated_types_distinct():
+    # bool and number never share an identity, nor do large distinct
+    # integers collapse via float rounding.
+    base = {"srv": []}
+    left = {"srv": [{"id": True}]}
+    right = {"srv": [{"id": 1}]}
+    merged, conflicts = merge(base, left, right, {"/srv": "id"})
+    assert [item["id"] for item in merged["srv"]] == [True, 1]
+    assert conflicts == []
+
+    big_a = 10**20
+    big_b = 10**20 + 1
+    merged, conflicts = merge(
+        {"srv": []}, {"srv": [{"id": big_a}]}, {"srv": [{"id": big_b}]},
+        {"/srv": "id"},
+    )
+    ids = [item["id"] for item in merged["srv"]]
+    # Distinct large integers keep distinct identities (never merged into
+    # one via float rounding).
+    assert sorted(ids) == sorted([big_a, big_b])
+    assert conflicts == []
+
+
 def test_nested_identity_array_via_wildcard_pointer():
     base = {
         "servers": [
