@@ -1095,8 +1095,35 @@ def _identity_eligible(base: list, left: list, right: list, id_key: str) -> bool
 
 def _canonical_id(value: Any) -> str:
     # sort_keys keeps {"a":1,"b":2} and {"b":2,"a":1} equivalent; such a
-    # composite identity is unusual but the ordering must be total.
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    # composite identity is unusual but the ordering must be total. Numbers
+    # are normalized so numerically equal spellings (1 vs 1.0, 0 vs -0.0)
+    # share one key, matching json_equal's numeric comparison; otherwise an
+    # item added identically by both sides with differing int/float
+    # spellings would be indexed as two new identities and appended twice.
+    return json.dumps(
+        _normalize_numbers(value), sort_keys=True,
+        separators=(",", ":"), ensure_ascii=False,
+    )
+
+
+def _normalize_numbers(value: Any) -> Any:
+    """Map numeric-equal JSON numbers to one representative.
+
+    Booleans stay booleans; integral floats become ints (so ``1`` and
+    ``1.0`` collide, as they do under :func:`json_equal`) and ``-0.0``
+    becomes ``0``. Composite values are normalized element-wise.
+    """
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else value
+    if isinstance(value, dict):
+        return {k: _normalize_numbers(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_normalize_numbers(v) for v in value]
+    return value
 
 
 def _index_items(items: list, id_key: str) -> "OrderedDict[str, dict]":

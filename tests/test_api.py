@@ -102,6 +102,40 @@ def test_invalid_identity_field_returns_400():
     assert response.status_code == 400
 
 
+def test_merge_identity_array_identical_both_side_add_appears_once():
+    # An identity item absent from base but added identically by both
+    # revisions is appended exactly once, sorted, with no conflict.
+    payload = {
+        "base": {"srv": [{"id": "a"}]},
+        "left": {"srv": [{"id": "a"}, {"id": "n", "v": 7}]},
+        "right": {"srv": [{"id": "a"}, {"id": "n", "v": 7}]},
+        "arrayIdentity": {"/srv": "id"},
+    }
+    response = client.post("/merge", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["merged"] == {"srv": [{"id": "a"}, {"id": "n", "v": 7}]}
+    assert body["conflicts"] == []
+
+
+def test_merge_identity_array_same_id_different_content_reports_both_added():
+    payload = {
+        "base": {"srv": []},
+        "left": {"srv": [{"id": "n", "v": 1}]},
+        "right": {"srv": [{"id": "n", "v": 2}]},
+        "arrayIdentity": {"/srv": "id"},
+    }
+    response = client.post("/merge", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["merged"] == {"srv": [{"id": "n", "v": 1}]}
+    assert body["conflicts"] == [
+        {"pointer": "/srv", "kind": "both_added",
+         "base": None, "left": {"id": "n", "v": 1},
+         "right": {"id": "n", "v": 2}}
+    ]
+
+
 # ------------------------------------------------------- conflict resolutions
 
 
